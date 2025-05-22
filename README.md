@@ -3,6 +3,10 @@
 
 This repository contains code for analyzing multimodal large language models (MLLMs) using counterfactual images. It includes tools for evaluating model accuracy, probing internal activations, computing attention shifts, and applying steering vector interventions. 
 
+<img src="image_editing/counterfactuals_example.png" alt="Demo" width="400"/>
+
+
+
 
 
 # Quick Start
@@ -12,7 +16,10 @@ Download the dataset from HuggingFace:
 ```python
 from datasets import load_dataset
 
-ds = load_dataset("mgolov/Visual-Counterfact")
+dataset = load_dataset("mgolov/Visual-Counterfact")
+
+df_color = dataset["color"].to_pandas()
+df_size = dataset["size"].to_pandas()
 ```
 
 
