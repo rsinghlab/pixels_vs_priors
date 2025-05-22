@@ -3,9 +3,9 @@
 
 This repository contains code for analyzing multimodal large language models (MLLMs) using counterfactual images. It includes tools for evaluating model accuracy, probing internal activations, computing attention shifts, and applying steering vector interventions. 
 
-![Counterfactual Example](image_preprocessing/counterfactuals_example.png)
 
 
+<img src="image_preprocessing/counterfactuals_example.png" alt="Counterfactual Example" width="400"/>
 
 
 
