@@ -26,7 +26,7 @@ df_size = dataset["size"].to_pandas()
 
 ---
 
-## File Descriptions
+## Analysis
 
 ### `test_MLLMs.py`
 Runs inference on MLLMs using the Visual CounterFact dataset. Outputs model responses to different prompt-image combinations.
@@ -46,6 +46,8 @@ Applies steering vectors to shift predictions from world knowledge (WK) to count
 ### `attention_mass.py`
 Analyzes changes in attention mass between image and text tokens, comparing prompt-based versus intervention-based steering.
 
+## Creating Visual CounterFact
+![Dataset Creation Pipeline](image_preprocessing/dataset_pipeline.png)
 ---
 
 ## Usage Notes
