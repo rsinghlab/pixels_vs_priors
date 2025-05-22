@@ -9,10 +9,11 @@ This repository contains code for analyzing multimodal large language models (ML
 
 Download the dataset from HuggingFace: 
 
+```python
 from datasets import load_dataset
 
-# Login using e.g. `huggingface-cli login` to access this dataset
-ds = load_dataset("mgolov/Visual-Counterfact").
+ds = load_dataset("mgolov/Visual-Counterfact")
+```
 
 
 
