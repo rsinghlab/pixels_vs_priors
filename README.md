@@ -7,8 +7,9 @@ This repository contains code for analyzing multimodal large language models (ML
   <img src="image_preprocessing/counterfactuals_example.png" alt="Counterfactual Example" width="600"/>
 </div
 
+---
 
-# Quick Start
+## Quick Start
 
 Download the dataset from HuggingFace: 
 
@@ -22,7 +23,6 @@ df_size = dataset["size"].to_pandas()
 ```
 
 
-
 ---
 
 ## Analysis
@@ -34,7 +34,7 @@ Runs inference on MLLMs using the Visual CounterFact dataset. Outputs model resp
 Implements early decoding to track model predictions across layers. Used to visualize when the model shifts from relying on world knowledge to visual input.
 
 ### `get_hidden_states.py`
-Extracts hidden activations from selected layers in the model. This must be run before computing steering vectors.
+Extracts hidden activations from selected layers in the model. **This must be run before computing steering vectors.**
 
 ### `task_vectors_inference_CF_WK.py`
 Applies steering vectors to shift predictions from counterfactual (CF) answers to world knowledge (WK). Requires hidden states from `get_hidden_states.py`.
@@ -49,7 +49,7 @@ Analyzes changes in attention mass between image and text tokens, comparing prom
 
 <div align="center">
   <img src="image_preprocessing/dataset_pipeline.png" alt="Dataset pipeline" width="400"/>
-</div
+</div>
 
 
 ---
