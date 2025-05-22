@@ -1,7 +1,20 @@
 
-# Visual CounterFact Codebase
+# Pixels Versus Priors: Controlling Knowledge Priors in Vision-Language Models through Visual Counterfacts
 
-This repository contains code for analyzing multimodal large language models (MLLMs) using counterfactual images. It includes tools for evaluating model accuracy, probing internal activations, computing attention shifts, and applying steering vector interventions.
+This repository contains code for analyzing multimodal large language models (MLLMs) using counterfactual images. It includes tools for evaluating model accuracy, probing internal activations, computing attention shifts, and applying steering vector interventions. 
+
+
+
+# Quick Start
+
+Download the dataset from HuggingFace: 
+
+from datasets import load_dataset
+
+# Login using e.g. `huggingface-cli login` to access this dataset
+ds = load_dataset("mgolov/Visual-Counterfact").
+
+
 
 ---
 
