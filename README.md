@@ -3,10 +3,9 @@
 
 This repository contains code for analyzing multimodal large language models (MLLMs) using counterfactual images. It includes tools for evaluating model accuracy, probing internal activations, computing attention shifts, and applying steering vector interventions. 
 
-
 <div align="center">
-  <img src="image_preprocessing/counterfactuals_example.png" alt="Counterfactual Example" width="500"/>
-</div>
+  <img src="image_preprocessing/counterfactuals_example.png" alt="Counterfactual Example" width="800"/>
+</div
 
 
 # Quick Start
@@ -47,7 +46,12 @@ Applies steering vectors to shift predictions from world knowledge (WK) to count
 Analyzes changes in attention mass between image and text tokens, comparing prompt-based versus intervention-based steering.
 
 ## Creating Visual CounterFact
-![Dataset Creation Pipeline](image_preprocessing/dataset_pipeline.png)
+
+<div align="center">
+  <img src="image_preprocessing/dataset_pipeline.png" alt="Dataset pipeline" width="600"/>
+</div
+
+
 ---
 
 ## Usage Notes
