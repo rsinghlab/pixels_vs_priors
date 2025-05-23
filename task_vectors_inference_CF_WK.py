@@ -34,6 +34,10 @@ from qwen_vl_utils import process_vision_info
 
 import argparse
 
+from datasets import load_dataset
+import io
+import random
+
 def get_outliers(states):
     # Calculate Outliers in the 0-shot setting
     var_per_dimension = np.var(states, axis=0)
@@ -59,55 +63,17 @@ def clean_instruction_tokens(text):
 
 
 def get_answers(model, model_name, task, processor, df, image_type, most, instruction_tokens, end_tokens):
-    
-    #base_path = "../multimodal_MI/visual_counterfact/"
-    base_path = "/oscar/data/ceickhof/visual_counterfact/"
-
-
     answers = {}
     for idx, row in df.iterrows():
-        if task == "size":
-            # --- Image loading ---
-            image_path = row['path_to_counterfact'] if image_type == 'counterfact' else row['path_to_clean']
-            try:
-                image = Image.open(image_path).convert("RGB").resize((256, 200), Image.LANCZOS)
-            except FileNotFoundError:
-                print(f"Warning: Image not found at {image_path}")
-                continue
-    
-            # --- Prompt construction ---
-            prompt = row["prompt_most"] if most == "True" else row["prompt_this"]
-            prompt = f"{instruction_tokens} {prompt} {end_tokens}"
-            #print(prompt)
-            
-        else:
-            base_path = "/oscar/data/ceickhof/visual_counterfact/"
+        if task == "color":
             if image_type == 'counterfact':
-                color_to_replace = row['image_path'].split('_')[1]
-                new_path = row['image_path'].replace(color_to_replace, row['incorrect_answer'])
-                image_path = new_path.replace('downloaded_images', 'downloaded_images_counterfact')
-                image_path = base_path + "final_counterfact_images/"  + image_path
-            elif image_type == 'clean': 
-                image_path = row['image_path']
-                 
-            try:
-               image = Image.open(image_path)
-            except FileNotFoundError:
-               print(f"Warning: Image not found at {image_path}")
-               continue  # Skip to the next row in the DataFrame
-        
-            # Resize images to 256 x 256. This is NEEDED for the google images
-            image = image.resize((256, 256), Image.LANCZOS)
-            """
-            if most == "True":
-                prompt = f"{instruction_tokens} Answer with one word. What color is a {row['correct_object']}? {end_tokens}"
+                image_path = row['counterfact_image']['bytes']
             else:
-                prompt = f"{instruction_tokens} Answer with one word. What color is this {row['correct_object']}? {end_tokens}"
-            """
-            object_name = row['correct_object']
+                image_path = row['original_image']['bytes']
+                
+            object_name = row['object']
             #question = f"What color is {'a' if most == 'True' else 'this'} {object_name}?"
             if most == "True":
-                #question = f"What color are most {object_name}s?"
                 object_name_plural = object_name if object_name.endswith("s") else object_name + "s"
                 question = f"What color are most {object_name_plural}?"
                 
@@ -115,22 +81,37 @@ def get_answers(model, model_name, task, processor, df, image_type, most, instru
                 question = f"What color is this {object_name}?"
                 
             prompt = f"{instruction_tokens} Answer with one word. {question} {end_tokens}"    
-            #print(prompt)
-            #print(prompt)
-        """    
-        inputs = processor(images=image, text=prompt, return_tensors='pt')
-        inputs = {k: v.to('cuda') for k, v in inputs.items()} 
-        
-        # Perform a forward pass with the model
-        outputs = model.generate(**inputs, max_new_tokens=20, pad_token_id=processor.tokenizer.pad_token_id, do_sample=False, num_beams=1, temperature =1.0)  # Adjust max_new_tokens as needed
-        predicted_answer = processor.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        predicted_answer = clean_instruction_tokens(predicted_answer)
-        """
-        if model_name == "janus":
-             with open(image_path, "rb") as image_file:
-                image_data = base64.b64encode(image_file.read()).decode("utf-8")
-                image = f"data:image/jpeg;base64,{image_data}"
+            
+        elif task == "size":
+            if image_type == "counterfact":
+                image_path = row['counterfact_image']['bytes']
+            else:
+                image_path = row['original_image']['bytes']
+            
+            # Randomly select whether the correct/incorrect object goes first. 
+            if most == "True":
+                objects = [row['correct_answer'], row['incorrect_answer']]
+                random.shuffle(objects)
+                prompt = f"Answer with the correct option. Which is larger usually, {objects[0]} or {objects[1]}?"
+            else:
+                objects = [row['correct_answer'], row['incorrect_answer']]
+                random.shuffle(objects)
+                prompt = f"Answer with the correct option. Which is larger here, {objects[0]} or {objects[1]}?" 
 
+            
+            prompt = f"{instruction_tokens} {prompt} {end_tokens}"
+            
+        try:
+            image = Image.open(io.BytesIO(image_path)).convert("RGB")
+            image = image.resize((256, 200) if task == "size" else (256, 256), Image.LANCZOS)
+        except FileNotFoundError:
+            print(f"Warning: Image not found for {row['object']}")
+            continue  # Skip to the next row in the DataFrame
+
+        if model_name == "janus": 
+             image_data = base64.b64encode(image_path).decode("utf-8")
+             image = f"data:image/jpeg;base64,{image_data}" 
+                
              conversation = [
                 {
                     "role": "<|User|>",
@@ -176,19 +157,17 @@ def get_answers(model, model_name, task, processor, df, image_type, most, instru
             predicted_answer = clean_instruction_tokens(predicted_answer)
             
         elif model_name == 'qwen':
+            pil_img = Image.open(io.BytesIO(image_path)).convert("RGB") 
+            pil_img = pil_img.resize((224, 224), Image.LANCZOS)
             
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "image": f"file://{image_path}",
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ]
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": pil_img},  # Pass resized image object
+                    {"type": "text", "text": prompt},
+                ],
+            }]
+  
             # Preparation for inference
             text = processor.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
@@ -350,51 +329,7 @@ def count_flips(task, edit_answers, original_answers, true_answers):
     print("Eligible Flip %: ", flip_count_original_not_true/original_not_true)
     
     return original_not_true, flip_count, flip_count_original_not_true, flip_to_correct_count
-"""
 
-#count_flips(args.task, edit_answers, original_answers, true_answers)
-def count_flips(task, edit_answers, original_answers, true_answers):
-    flip_count = 0
-    flip_to_true_count = 0
-
-    color_mappings = {
-        "yellow": ["gold"], 
-        "gold": ["orange", "yellow"],
-        "purple": ["pink"], 
-        "pink": ["purple"],
-        "brown": ["orange"], 
-        "orange": ["brown"],
-        "red": ["red"],
-        "black": ["gray", "grey", "silver"],
-        "gray": ["black", "silver"],
-        "grey": ["black", "silver", "gray"],
-        "green": ["green"],
-        "blue": ["blue"],
-        "silver": ["silver", "gray", "grey"],
-        "white": ["white"]
-    }
-
-    for key in original_answers:
-        original = original_answers.get(key, "").lower().replace("_", " ").replace("the ", "").replace(" is larger usually.", "").replace(".", "")
-        edit = edit_answers.get(key, "").lower().replace("_", " ").replace("the ", "").replace(" is larger usually.", "").replace(".", "")
-        true = true_answers.get(key, "").lower().replace("_", " ").replace("the ", "").replace(" is larger usually.", "").replace(".", "")
-
-        if edit != original:
-            flip_count += 1
-            if task == "color":
-                if edit == true or edit in color_mappings.get(true, []):
-                    flip_to_true_count += 1
-            else:
-                if edit == true:
-                    flip_to_true_count += 1
-
-    total = len(original_answers)
-
-    print("Flips %: ", flip_count / total)
-    print("Flip to World-knowledge %: ", flip_to_true_count / total)
-
-    return flip_count, flip_to_true_count
-"""
 def main():     
     parser = argparse.ArgumentParser(description="Run MLLMs on all tasks.")
     parser.add_argument('--model_version', type=str, choices=['llava-next', 'qwen' ,'janus'], required=True, help="Choose the model version.")
@@ -405,7 +340,8 @@ def main():
     parser.add_argument('--target_layers', required=True, type=int, nargs='+', help="List of target layers as integers.")
     
     args = parser.parse_args()
-    
+    random.seed(0)
+
     # Load LLAVA model and processor
     bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -449,13 +385,6 @@ def main():
         end_tokens = ""
         
     if args.task == "color":
-        #df = pd.read_csv("/oscar/data/ceickhof/visual_counterfact/final_images_with_counterfact.csv") #.head(10)
-        #color_df_for_TV_qwen.csv
-        #df_name = f'color_df_for_TV_{args.model_version}.csv'
-        #df = pd.read_csv(df_name)
-        #df = pd.read_csv("/oscar/data/ceickhof/visual_counterfact/final_images_with_counterfact.csv") #.head(10)
-
-        #df = pd.read_csv("color_filtered_CF.csv")
         if model_name == "llava-next":
             df = pd.read_csv("color_filtered_CF.csv") #.head(5)
             
@@ -473,12 +402,7 @@ def main():
         with open(file_path, "rb") as f:
             states_counterfact_most = pickle.load(f)
             
-    elif args.task == "size":
-        #df = pd.read_csv("with_line_sizes_dup.csv") #.head(10)
-        
-        #df = pd.read_csv("with_line_sizes_balanced.csv")
-        
-        #df = pd.read_csv("size_filtered_WK.csv")
+    elif args.task == "size": 
 
         if model_name == "llava-next":
             df = pd.read_csv("size_df_for_TV_llava-next.csv") #.head(5)
@@ -490,12 +414,10 @@ def main():
             df = pd.read_csv("size_df_for_TV_janus.csv") #.head(5)
     
         file_path = f"hidden_states_size_{model_name}_1754_most_False.pickle"
-        #file_path = "hidden_states_size_llava-next_877_most_False.pickle"
         with open(file_path, "rb") as f:
             states_counterfact_this = pickle.load(f)
     
         file_path = f"hidden_states_size_{model_name}_1754_most_True.pickle"
-        #file_path = "hidden_states_size_llava-next_877_most_True.pickle"
         with open(file_path, "rb") as f:
             states_counterfact_most = pickle.load(f)
         
@@ -507,9 +429,6 @@ def main():
     # SPECIFY THE TARGET LAYERS TO ADD THE TASK VECTOR
     TARGET_LAYERS = args.target_layers 
     print(TARGET_LAYERS)
-
-    # outliers
-    outlier_indices_tensor = torch.tensor([2070, 2078, 3901], device=model.device)    
     
     if args.ablate == 'keep-k':
         outlier_indices_tensor = {
@@ -544,36 +463,6 @@ def main():
             ).to(model.device)
             for layer_idx in TARGET_LAYERS
         }
-
-    if args.ablate == 'non-outliers':
-        # ablate all non-outliers. 
-        # only add outliers in tv
-        task_vectors = {
-            layer_idx: torch.zeros(4096, dtype=torch.float16, device=model.device)  # Initialize a zero tensor
-            .index_put_((outlier_indices_tensor,), torch.tensor( #SWAP HERE
-                #np.mean(states_counterfact_this[layer_idx] - states_counterfact_most[layer_idx], axis=0), 
-                np.mean(states_counterfact_most[layer_idx] - states_counterfact_this[layer_idx], axis=0), 
-                dtype=torch.float16,
-                device=model.device  # Ensure the tensor is created on the correct device
-            )[outlier_indices_tensor]).to(model.device)  # Set values at specific indices
-            for layer_idx in TARGET_LAYERS
-        }
-
-    if args.ablate == 'only-outliers': 
-        # Compute the mean differences for each target layer.
-        task_vectors = {
-            layer_idx: torch.tensor( #SWAP HERE
-                #np.mean(states_counterfact_this[layer_idx] - states_counterfact_most[layer_idx], axis=0),
-                np.mean(states_counterfact_most[layer_idx] - states_counterfact_this[layer_idx], axis=0),
-                dtype=torch.float16,
-                device=model.device
-            )
-            for layer_idx in TARGET_LAYERS
-        }
-
-        for layer_idx in TARGET_LAYERS:
-            # Use in-place assignment to set specified indices to 0.
-            task_vectors[layer_idx][outlier_indices_tensor.to(torch.int64)] = 0.0
 
     # Replace the target layers in the Mistral model
     if model_name == "llava-next":

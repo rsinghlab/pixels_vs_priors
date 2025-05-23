@@ -33,6 +33,10 @@ from qwen_vl_utils import process_vision_info
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+from datasets import load_dataset
+import io
+import random 
+
 def get_nvidia_smi():
     result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
     return result.stdout
@@ -56,51 +60,16 @@ def get_hidden_states(batch_df, task,  processor, model, model_name, image_type,
     states = {}
     
     for idx, row in batch_df.iterrows():
-        entry = defaultdict(list)
 
-        if task == "size":
-
-            # --- Image loading ---
-            image_path = row['path_to_counterfact'] if image_type == 'counterfact' else row['path_to_clean']
-            try:
-                image = Image.open(image_path).convert("RGB").resize((256, 200), Image.LANCZOS)
-            except FileNotFoundError:
-                print(f"Warning: Image not found at {image_path}")
-                continue
-    
-            # --- Prompt construction ---
-            prompt = row["prompt_most"] if most == "True" else row["prompt_this"]
-            prompt = f"{instruction_tokens} {prompt} {end_tokens}"
-            print(prompt)
-            
-        else:
-            base_path = "/oscar/data/ceickhof/visual_counterfact/"
+        if task == "color":
             if image_type == 'counterfact':
-                color_to_replace = row['image_path'].split('_')[1]
-                new_path = row['image_path'].replace(color_to_replace, row['incorrect_answer'])
-                image_path = new_path.replace('downloaded_images', 'downloaded_images_counterfact')
-                image_path = base_path + "final_counterfact_images/"  + image_path
-            elif image_type == 'clean': 
-                image_path = row['image_path']
-                 
-            try:
-               image = Image.open(image_path)
-            except FileNotFoundError:
-               print(f"Warning: Image not found at {image_path}")
-               continue  # Skip to the next row in the DataFrame
-        
-            # Resize images to 256 x 256. This is NEEDED for the google images
-            image = image.resize((256, 256), Image.LANCZOS)
-            """
-            if most == "True":
-                prompt = f"{instruction_tokens} Answer with one word. What color is a {row['correct_object']}? {end_tokens}"
+                image_path = row['counterfact_image']['bytes']
             else:
-                prompt = f"{instruction_tokens} Answer with one word. What color is this {row['correct_object']}? {end_tokens}"
-            """
-            object_name = row['correct_object']
+                image_path = row['original_image']['bytes']
+                
+            object_name = row['object']
             #question = f"What color is {'a' if most == 'True' else 'this'} {object_name}?"
             if most == "True":
-                #question = f"What color are most {object_name}s?"
                 object_name_plural = object_name if object_name.endswith("s") else object_name + "s"
                 question = f"What color are most {object_name_plural}?"
                 
@@ -108,8 +77,30 @@ def get_hidden_states(batch_df, task,  processor, model, model_name, image_type,
                 question = f"What color is this {object_name}?"
                 
             prompt = f"{instruction_tokens} Answer with one word. {question} {end_tokens}"    
-            print(prompt)
             
+        elif task == "size":
+            if image_type == "counterfact":
+                image_path = row['counterfact_image']['bytes']
+            else:
+                image_path = row['original_image']['bytes']
+            
+            # Randomly select whether the correct/incorrect object goes first. 
+            if most == "True":
+                objects = [row['correct_answer'], row['incorrect_answer']]
+                random.shuffle(objects)
+                prompt = f"Answer with the correct option. Which is larger usually, {objects[0]} or {objects[1]}?"
+            else:
+                objects = [row['correct_answer'], row['incorrect_answer']]
+                random.shuffle(objects)
+                prompt = f"Answer with the correct option. Which is larger here, {objects[0]} or {objects[1]}?" 
+            prompt = f"{instruction_tokens} {prompt} {end_tokens}"
+            
+        try:
+            image = Image.open(io.BytesIO(image_path)).convert("RGB")
+            image = image.resize((256, 200) if task == "size" else (256, 256), Image.LANCZOS)
+        except FileNotFoundError:
+            print(f"Warning: Image not found for {row['object']}")
+            continue  # Skip to the next row in the DataFrame 
 
         # --- Model forward ---
         #inputs = processor(images=image, text=prompt, return_tensors='pt')
@@ -118,9 +109,8 @@ def get_hidden_states(batch_df, task,  processor, model, model_name, image_type,
         #outputs = model(**inputs, output_hidden_states=True)
 
         if model_name == "janus":
-             with open(image_path, "rb") as image_file:
-                image_data = base64.b64encode(image_file.read()).decode("utf-8")
-                image = f"data:image/jpeg;base64,{image_data}"
+             image_data = base64.b64encode(image_path).decode("utf-8")
+             image = f"data:image/jpeg;base64,{image_data}"  
 
              conversation = [
                 {
@@ -163,13 +153,15 @@ def get_hidden_states(batch_df, task,  processor, model, model_name, image_type,
             outputs = model(**inputs, output_hidden_states=True)  # Adjust max_new_tokens as needed
             
         elif model_name == 'qwen':
+            pil_img = Image.open(io.BytesIO(image_path)).convert("RGB") 
+            pil_img = pil_img.resize((224, 224), Image.LANCZOS)
             messages = [
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "image",
-                            "image": f"file://{image_path}",
+                            "image": pil_img,
                         },
                         {"type": "text", "text": prompt},
                     ],
@@ -224,7 +216,8 @@ def main():
     parser.add_argument('--most', type=str, choices=['True', 'False'], required=True, help="Choose if using 'this' or 'most'.")
 
     args = parser.parse_args()
-
+    random.seed(0)
+    
     print(torch.cuda.is_available())
     
     bnb_config = BitsAndBytesConfig(
@@ -253,13 +246,20 @@ def main():
         "Qwen/Qwen2-VL-7B-Instruct", torch_dtype="auto", device_map="auto"
         )
 
+    dataset = load_dataset("mgolov/Visual-Counterfact")
+
     # load DF. 
     if args.task == "color":
-        df = pd.read_csv("/oscar/data/ceickhof/visual_counterfact/final_images_with_counterfact.csv")
+        df = dataset["color"].to_pandas()
+        if args.dataset_size == "mini":
+            df = df.head(5)
+        
         
     elif args.task == "size":
-        #df = pd.read_csv("with_line_sizes_dup.csv")
-        df = pd.read_csv("with_line_sizes_balanced.csv")
+        if args.line == "True":
+            df = dataset["size"].to_pandas()
+        if args.dataset_size == "mini":
+            df = df.head(5) 
 
     
     batch_size = args.batch_size

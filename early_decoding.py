@@ -240,13 +240,15 @@ def mllm_early_decoding(df, processor, model, model_name, task, most="True"):
             outputs = model(**inputs, output_hidden_states=True)  # Adjust max_new_tokens as needed
             
         elif model_name == 'qwen':
+            pil_img = Image.open(io.BytesIO(image_path)).convert("RGB") 
+            pil_img = pil_img.resize((224, 224), Image.LANCZOS)
             messages = [
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "image",
-                            "image": f"file://{image_path}",
+                            "image": pil_img,
                         },
                         {"type": "text", "text": prompt},
                     ],
