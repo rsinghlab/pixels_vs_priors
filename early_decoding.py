@@ -31,6 +31,10 @@ from collections import defaultdict
 import subprocess
 from qwen_vl_utils import process_vision_info
 import os
+import random
+from datasets import load_dataset
+import io
+
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 def get_nvidia_smi():
@@ -68,18 +72,19 @@ def get_lm_preds(df, processor, model, model_name, task):
             
         if task == "color":    
             #prompt = f"{instruction_tokens} Answer with one word. What color are most {row['correct_object']}s? {end_tokens}"
-            object_name = row['correct_object']
+            object_name = row['object']
             object_name_plural = object_name if object_name.endswith("s") else object_name + "s"
             question = f"What color are most {object_name_plural}?"
             prompt = f"{instruction_tokens} Answer with one word. {question} {end_tokens}"   
                 
             
-        elif task == "size":
-            prompt = row["prompt_most"]
-            #prompt = f"{instruction_tokens} Answer with the correct option. Which is usually larger {row['correct_answer']} or {row['incorrect_answer']}? {end_tokens}" # Answer with one word.
-            prompt = instruction_tokens + " " + prompt + " " + end_tokens
-            #prompt = f"{instruction_tokens} Answer with one word. Which is usually larger? {end_tokens}"
-        
+        elif task == "size":            
+            # Randomly select whether the correct/incorrect object goes first. 
+            objects = [row['correct_answer'], row['incorrect_answer']]
+            random.shuffle(objects)
+            prompt = f"Answer with the correct option. Which is larger usually, {objects[0]} or {objects[1]}?"
+            prompt = f"{instruction_tokens} {prompt} {end_tokens}" 
+
         inputs = processor.tokenizer(text=prompt, return_tensors='pt').to(model.device)
 
         # Perform a forward pass with the model
@@ -93,7 +98,7 @@ def get_lm_preds(df, processor, model, model_name, task):
                 pad_token_id=processor.tokenizer.eos_token_id,
                 bos_token_id=processor.tokenizer.bos_token_id,
                 eos_token_id=processor.tokenizer.eos_token_id,
-                mmax_new_tokens=10, num_beams=1, do_sample=False, temperature=1.0)
+                max_new_tokens=10, num_beams=1, do_sample=False, temperature=1.0)
             # Keeping special tokens bc it makes the regex easier to write. 
             predicted_answer = clean_janus_answer(processor.tokenizer.decode(outputs[0].cpu().tolist(), skip_special_tokens=False))     
             
@@ -129,14 +134,7 @@ def get_lm_preds(df, processor, model, model_name, task):
             print("PRED: ", pred)
             print("Label: ", row["correct_answer"])
             incorrect_idx_ex.append(row.index)
-        """
-        if task == "color":
-            if row["correct_answer"].lower() not in row["all_colors"]: #not in pred:
-                print("Prompt: ", prompt)
-                print("PRED: ", pred)
-                print("Label: ", row["correct_answer"])
-                incorrect_idx.append(row.index)
-        """
+
 
     print("EXACT MATCH ACC: ",(len(preds) - len(incorrect_idx_ex))/len(preds)*100 )
     
@@ -162,67 +160,45 @@ def mllm_early_decoding(df, processor, model, model_name, task, most="True"):
             end_tokens=''
             
         if task == "color":
-            base_path = "/oscar/data/ceickhof/visual_counterfact/"
-            #if image_type == 'counterfact':
-            color_to_replace = row['image_path'].split('_')[1]
-            new_path = row['image_path'].replace(color_to_replace, row['incorrect_answer'])
-            image_path = new_path.replace('downloaded_images', 'downloaded_images_counterfact')
-            image_path = base_path + "final_counterfact_images/"  + image_path
-            #elif image_type == 'clean': 
-            #    image_path = row['image_path']
-        
-            # Resize images to 256 x 256. This is NEEDED for the google images
-            """
-            if most == "True":
-                prompt = f"{instruction_tokens} Answer with one word. What color is a {row['correct_object']}? {end_tokens}"
-            else:
-                prompt = f"{instruction_tokens} Answer with one word. What color is this {row['correct_object']}? {end_tokens}"
-            """
-            object_name = row['correct_object']
+            image_path = row['counterfact_image']['bytes']                    
+            object_name = row['object']
             #question = f"What color is {'a' if most == 'True' else 'this'} {object_name}?"
             if most == "True":
-                #question = f"What color are most {object_name}s?"
                 object_name_plural = object_name if object_name.endswith("s") else object_name + "s"
                 question = f"What color are most {object_name_plural}?"
                 
             else:
                 question = f"What color is this {object_name}?"
                 
-            prompt = f"{instruction_tokens} Answer with one word. {question} {end_tokens}"    
-            print(prompt)
-            
-            try:
-                image = Image.open(image_path).convert("RGB").resize((256, 256), Image.LANCZOS)
-            except FileNotFoundError:
-                print(f"Warning: Image not found at {image_path}")
-                continue  # Skip to the next row in the DataFrame
-
+            prompt = f"{instruction_tokens} Answer with one word. {question} {end_tokens}" 
         
         elif task == "size":
-            image_path = row['path_to_counterfact']
-            
+            image_path = row['counterfact_image']['bytes']
+
+            # Randomly select whether the correct/incorrect object goes first. 
             if most == "True":
-                prompt = row["prompt_most"]
-                prompt = instruction_tokens + " " + prompt + " " + end_tokens
-                print(prompt)
-                
+                objects = [row['correct_answer'], row['incorrect_answer']]
+                random.shuffle(objects)
+                prompt = f"Answer with the correct option. Which is larger usually, {objects[0]} or {objects[1]}?"
             else:
-                prompt = row["prompt_this"]
-                prompt = instruction_tokens + " " + prompt + " " + end_tokens
-                print(prompt)
+                objects = [row['correct_answer'], row['incorrect_answer']]
+                random.shuffle(objects)
+                prompt = f"Answer with the correct option. Which is larger here, {objects[0]} or {objects[1]}?" 
+
             
-        
-            try:
-                image = Image.open(image_path).convert("RGB").resize((256, 200), Image.LANCZOS)
-            except FileNotFoundError:
-                print(f"Warning: Image not found at {image_path}")
-                continue  # Skip to the next row in the DataFrame
+                prompt = f"{instruction_tokens} {prompt} {end_tokens}"
+
+        try:
+            image = Image.open(io.BytesIO(image_path)).convert("RGB")
+            image = image.resize((256, 200) if task == "size" else (256, 256), Image.LANCZOS)
+        except FileNotFoundError:
+            print(f"Warning: Image not found for {row['object']}")
+            continue  # Skip to the next row in the DataFrame
 
                 
         if model_name == "janus":
-             with open(image_path, "rb") as image_file:
-                image_data = base64.b64encode(image_file.read()).decode("utf-8")
-                image = f"data:image/jpeg;base64,{image_data}"
+             image_data = base64.b64encode(image_path).decode("utf-8")
+             image = f"data:image/jpeg;base64,{image_data}" 
 
              conversation = [
                 {
@@ -399,6 +375,8 @@ def main():
 
     args = parser.parse_args()
 
+    random.seed(0)
+
     print(torch.cuda.is_available())
     
     bnb_config = BitsAndBytesConfig(
@@ -428,9 +406,11 @@ def main():
         )
 
     # load DF. 
+    
+    dataset = load_dataset("mgolov/Visual-Counterfact")
+    
     if args.task == "color":
-        df = pd.read_csv("/oscar/data/ceickhof/visual_counterfact/final_images_with_counterfact.csv")
-        
+        df = dataset["color"].to_pandas()
         if not os.path.exists(f"{args.task}_preds_{args.model_version}.npy"):
             # Your code block here
             print("Generating LM-Only Predictions")
@@ -447,8 +427,7 @@ def main():
         top_half = df.iloc[:mid]
         bottom_half = df.iloc[mid:]
         """
-        #df = pd.read_csv("with_line_sizes_dup.csv").head(100)
-        df = pd.read_csv("with_line_sizes_dup.csv")
+        df = dataset["color"].to_pandas() 
         
         if not os.path.exists(f"{args.task}_preds_{args.model_version}.npy"):
             # Your code block here
@@ -462,6 +441,9 @@ def main():
                
     batch_size = 50
     answers = {}
+
+    if args.dataset_size == 'mini':
+        df = df.head(5)
     
     for i in range(0, len(df), batch_size):
         print(f"Processing batch {i} → {i + batch_size}")

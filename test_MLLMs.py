@@ -65,7 +65,7 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
                 if image_type == 'counterfact':
                     image_path = row['counterfact_image']['bytes']
                 else:
-                    image_path = row['counterfact_image']['bytes']
+                    image_path = row['original_image']['bytes']
                     
                 object_name = row['object']
                 #question = f"What color is {'a' if most == 'True' else 'this'} {object_name}?"
@@ -77,13 +77,12 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
                     question = f"What color is this {object_name}?"
                     
                 prompt = f"{instruction_tokens} Answer with one word. {question} {end_tokens}"    
-                print(prompt)
                 
             elif task == "size":
                 if image_type == "counterfact":
                     image_path = row['counterfact_image']['bytes']
                 else:
-                    image_path = row['counterfact_image']['bytes']
+                    image_path = row['original_image']['bytes']
                 
                 # Randomly select whether the correct/incorrect object goes first. 
                 if most == "True":
@@ -97,10 +96,7 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
 
                 
                 prompt = f"{instruction_tokens} {prompt} {end_tokens}"
-                print(prompt)
                 
-            print(prompt)
-            
             try:
                 image = Image.open(io.BytesIO(image_path)).convert("RGB")
                 image = image.resize((256, 200) if task == "size" else (256, 256), Image.LANCZOS)
@@ -108,7 +104,7 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
                 print(f"Warning: Image not found for {row['object']}")
                 generated_texts.append(None)
                 continue  # Skip to the next row in the DataFrame
-    
+
             if model_name == "janus": 
                  image_data = base64.b64encode(image_path).decode("utf-8")
                  image = f"data:image/jpeg;base64,{image_data}" 
@@ -260,7 +256,7 @@ def main():
     parser.add_argument('--most', type=str, choices=['True', 'False'], required=True, help="Choose if using 'this' or 'most'.")
 
     args = parser.parse_args()
-
+    random.seed(0)
     print(torch.cuda.is_available())
     
     bnb_config = BitsAndBytesConfig(
@@ -324,9 +320,8 @@ def main():
         gc.collect()
     
     df = pd.concat(results, ignore_index=True)
-    print(df)
 
-    #df.to_csv(f'most_instances_plural_bigger_{args.task}_new_MLLM_results_most_{args.most}_{args.image_type}_line_{args.line}_{args.model_version}_{args.dataset_size}.csv', index=False)
+    df.to_csv(f'most_instances_plural_bigger_{args.task}_new_MLLM_results_most_{args.most}_{args.image_type}_line_{args.line}_{args.model_version}_{args.dataset_size}.csv', index=False)
 
     
 if __name__ == "__main__":
