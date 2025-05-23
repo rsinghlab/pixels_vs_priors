@@ -14,6 +14,7 @@ from sklearn.metrics import accuracy_score
 
 from PIL import Image
 import matplotlib.pyplot as plt
+import random
 
 from transformers import AutoProcessor, LlavaForConditionalGeneration, BitsAndBytesConfig
 
@@ -29,6 +30,9 @@ import gc
 
 from collections import defaultdict
 from qwen_vl_utils import process_vision_info
+
+from datasets import load_dataset
+import io
 
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -58,19 +62,14 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
                 end_tokens=''
                 
             if task == "color":
-                base_path = "/oscar/data/ceickhof/visual_counterfact/"
                 if image_type == 'counterfact':
-                    color_to_replace = row['image_path'].split('_')[1]
-                    new_path = row['image_path'].replace(color_to_replace, row['incorrect_answer'])
-                    image_path = new_path.replace('downloaded_images', 'downloaded_images_counterfact')
-                    image_path = base_path + "final_counterfact_images/" + image_path
+                    image_path = row['counterfact_image']['bytes']
                 else:
-                    image_path = row['image_path']
+                    image_path = row['counterfact_image']['bytes']
                     
-                object_name = row['correct_object']
+                object_name = row['object']
                 #question = f"What color is {'a' if most == 'True' else 'this'} {object_name}?"
                 if most == "True":
-                    #question = f"What color are most {object_name}s?"
                     object_name_plural = object_name if object_name.endswith("s") else object_name + "s"
                     question = f"What color are most {object_name_plural}?"
                     
@@ -82,28 +81,38 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
                 
             elif task == "size":
                 if image_type == "counterfact":
-                    image_path = row['path_to_counterfact']
+                    image_path = row['counterfact_image']['bytes']
                 else:
-                    image_path = row['path_to_clean']
+                    image_path = row['counterfact_image']['bytes']
                 
-                prompt = row["prompt_most"] if most == "True" else row["prompt_this"]
+                # Randomly select whether the correct/incorrect object goes first. 
+                if most == "True":
+                    objects = [row['correct_answer'], row['incorrect_answer']]
+                    random.shuffle(objects)
+                    prompt = f"Answer with the correct option. Which is larger usually, {objects[0]} or {objects[1]}?"
+                else:
+                    objects = [row['correct_answer'], row['incorrect_answer']]
+                    random.shuffle(objects)
+                    prompt = f"Answer with the correct option. Which is larger here, {objects[0]} or {objects[1]}?" 
+
+                
                 prompt = f"{instruction_tokens} {prompt} {end_tokens}"
                 print(prompt)
                 
+            print(prompt)
             
             try:
-                image = Image.open(image_path).convert("RGB")
+                image = Image.open(io.BytesIO(image_path)).convert("RGB")
                 image = image.resize((256, 200) if task == "size" else (256, 256), Image.LANCZOS)
             except FileNotFoundError:
-                print(f"Warning: Image not found at {image_path}")
+                print(f"Warning: Image not found for {row['object']}")
                 generated_texts.append(None)
                 continue  # Skip to the next row in the DataFrame
     
-            if model_name == "janus":
-                 with open(image_path, "rb") as image_file:
-                    image_data = base64.b64encode(image_file.read()).decode("utf-8")
-                    image = f"data:image/jpeg;base64,{image_data}"
-    
+            if model_name == "janus": 
+                 image_data = base64.b64encode(image_path).decode("utf-8")
+                 image = f"data:image/jpeg;base64,{image_data}" 
+                    
                  conversation = [
                     {
                         "role": "<|User|>",
@@ -149,7 +158,7 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
                 predicted_answer = clean_instruction_tokens(predicted_answer)
                 
             elif model_name == 'qwen':
-                pil_img = Image.open(image_path).convert("RGB")
+                pil_img = Image.open(io.BytesIO(image_path)).convert("RGB") 
                 pil_img = pil_img.resize((224, 224), Image.LANCZOS)
                 
                 messages = [{
@@ -159,15 +168,7 @@ def mllm_testing(df, processor, model, model_name, task, image_type, most="True"
                         {"type": "text", "text": prompt},
                     ],
                 }]
-                """
-                messages = [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": f"file://{image_path}"},
-                        {"type": "text", "text": prompt},
-                    ],
-                }]
-                """
+ 
     
                 text = processor.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
@@ -252,7 +253,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run MLLMs on all tasks.")
     parser.add_argument('--model_version', type=str, choices=['llava-next', 'qwen' ,'janus'], required=True, help="Choose the model version.")
     parser.add_argument('--task', type=str, choices=['color', 'size'], required=True, help="Choose the task.")
-    parser.add_argument('--line', type=str, choices=['True', 'False'], required=True, help="Only for size.")
+    # NOTE: all images now have a perspective line. Keeping in to not mess up file names. 
+    parser.add_argument('--line', type=str, choices=['True'], required=True, help="Can only select True. Shows perspective line on size-images.")
     parser.add_argument('--dataset_size', type=str, choices=['mini', 'full'], required=True, help="Choose dataset size (mini or full).")
     parser.add_argument('--image_type', type=str, choices=['counterfact', 'real'], required=True, help="Choose image type.")
     parser.add_argument('--most', type=str, choices=['True', 'False'], required=True, help="Choose if using 'this' or 'most'.")
@@ -290,23 +292,18 @@ def main():
         model = model.to(torch.bfloat16).cuda().eval()
         #model.cuda()
 
+    dataset = load_dataset("mgolov/Visual-Counterfact")
+
     # load DF. 
     if args.task == "color":
-        df = pd.read_csv("/oscar/data/ceickhof/visual_counterfact/final_images_with_counterfact.csv") #.head(10)
+        df = dataset["color"].to_pandas()
         if args.dataset_size == "mini":
             df = df.head(5)
         
         
     elif args.task == "size":
         if args.line == "True":
-            df = pd.read_csv("with_line_sizes_dup.csv")
-            #df = pd.read_csv("with_line_sizes_dup_plural.csv")
-            print("with line!")
-        else:
-            df = pd.read_csv("no_line_sizes.csv")
-            print("no line!")
-            
-        #df = pd.read_csv("composite_images.csv")
+            df = dataset["size"].to_pandas()
         if args.dataset_size == "mini":
             df = df.head(5)
     
@@ -327,8 +324,9 @@ def main():
         gc.collect()
     
     df = pd.concat(results, ignore_index=True)
+    print(df)
 
-    df.to_csv(f'most_instances_plural_bigger_{args.task}_new_MLLM_results_most_{args.most}_{args.image_type}_line_{args.line}_{args.model_version}_{args.dataset_size}.csv', index=False)
+    #df.to_csv(f'most_instances_plural_bigger_{args.task}_new_MLLM_results_most_{args.most}_{args.image_type}_line_{args.line}_{args.model_version}_{args.dataset_size}.csv', index=False)
 
     
 if __name__ == "__main__":
