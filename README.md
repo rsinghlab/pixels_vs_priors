@@ -10,7 +10,7 @@ This repository contains code for analyzing multimodal large language models (ML
 ---
 
 ## Quick Start
-[📖 Paper](TBD) | [🤗 Hugging Face Dataset](https://huggingface.co/datasets/mgolov/Visual-Counterfact)
+[📖 Paper](https://arxiv.org/abs/2505.17127) | [🤗 Hugging Face Dataset](https://huggingface.co/datasets/mgolov/Visual-Counterfact)
 
 Download the dataset from HuggingFace: 
 
