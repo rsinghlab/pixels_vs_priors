@@ -217,139 +217,7 @@ def run_attention_mass_analysis(batch_df, task, processor, model, model_version,
 
     return results
     
-"""
-def run_attention_mass_analysis(batch_df, task, processor, model, model_version, image_type, most, instruction_tokens, end_tokens):
-    results = {}
 
-    for idx, row in batch_df.iterrows():
-        entry = defaultdict(list)
-
-        # --- Image path ---
-        if task == "size":
-            image_path = row['path_to_counterfact'] if image_type == 'counterfact' else row['path_to_clean']
-        else:
-            base_path = "/oscar/data/ceickhof/visual_counterfact/"
-            if image_type == 'counterfact':
-                color_to_replace = row['image_path'].split('_')[1]
-                new_path = row['image_path'].replace(color_to_replace, row['incorrect_answer'])
-                image_path = new_path.replace('downloaded_images', 'downloaded_images_counterfact')
-                image_path = base_path + "final_counterfact_images/" + image_path
-            else:
-                image_path = row['image_path']
-
-        # --- Load image ---
-        try:
-            if model_version == "janus":
-                with open(image_path, "rb") as image_file:
-                    image_data = base64.b64encode(image_file.read()).decode("utf-8")
-                    image = f"data:image/jpeg;base64,{image_data}"
-            else:
-                image = Image.open(image_path).convert("RGB")
-        except FileNotFoundError:
-            print(f"Warning: Image not found at {image_path}")
-            continue
-
-        # --- Build prompt ---
-        if task == "size":
-            prompt = row["prompt_most"] if most == "True" else row["prompt_this"]
-            prompt = f"{instruction_tokens} {prompt} {end_tokens}"
-        else:
-            if most == "True":
-                prompt = f"{instruction_tokens} Answer with one word. What color is a {row['correct_object']}? {end_tokens}"
-            else:
-                prompt = f"{instruction_tokens} Answer with one word. What color is this {row['correct_object']}? {end_tokens}"
-
-        print(prompt)
-
-        # --- Prepare inputs and run forward pass ---
-        if model_version == "janus":
-            conversation = [
-                {
-                    "role": "<|User|>",
-                    "content": f"<image_placeholder>\n{prompt}",
-                    "images": [image],
-                },
-                {"role": "<|Assistant|>", "content": ""},
-            ]
-
-            pil_images = load_pil_images(conversation)
-            prepare_inputs = processor(
-                conversations=conversation, images=pil_images, force_batchify=True
-            ).to(model.device)
-
-            inputs_embeds = model.prepare_inputs_embeds(**prepare_inputs)
-            outputs = model.language_model(
-                inputs_embeds=inputs_embeds,
-                attention_mask=prepare_inputs.attention_mask,
-                output_attentions=True,
-                use_cache=True
-            )
-            input_ids = prepare_inputs["input_ids"].detach().cpu().numpy()[0]
-            tokenizer = processor.tokenizer
-            img_token_id = tokenizer.convert_tokens_to_ids("<image>")
-
-        elif model_version == "llava-next":
-            if task == "color":
-                image = image.resize((256, 256), Image.LANCZOS if task == "color" else Image.LANCZOS)
-            else:
-                image = image.resize((256, 200), Image.LANCZOS if task == "color" else Image.LANCZOS)
-            inputs = processor(images=image, text=prompt, return_tensors='pt')
-            inputs = {k: v.to("cuda") for k, v in inputs.items()}
-            outputs = model(**inputs, output_attentions=True)
-            input_ids = inputs["input_ids"].detach().cpu().numpy()[0]
-            img_token_id = processor.tokenizer.convert_tokens_to_ids("<image>")
-
-        elif model_version == "qwen":
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": f"file://{image_path}"},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ]
-            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs = process_vision_info(messages)
-            inputs = processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            ).to("cuda")
-            outputs = model(**inputs, output_attentions=True)
-            input_ids = inputs["input_ids"].detach().cpu().numpy()[0]
-            img_token_id = processor.tokenizer.convert_tokens_to_ids("<image>")
-
-        # --- Token index separation ---
-        img_indices = np.where(input_ids == img_token_id)
-        text_indices = np.where(input_ids != img_token_id)
-
-        # --- Attention mass per layer ---
-        for layer_idx in range(len(outputs.attentions)):
-            attn = outputs.attentions[layer_idx].squeeze().detach().cpu().to(torch.float32).numpy()
-            attn_from_last_token = attn[:, -1, :]  # shape: [heads, tokens]
-
-            attn_to_img = attn_from_last_token[:, img_indices].squeeze(axis=1)
-            attn_to_text = attn_from_last_token[:, text_indices].squeeze(axis=1)
-
-            entry[f"img_mass_layer_{layer_idx}"] = np.sum(attn_to_img) / attn_to_img.shape[0]
-            entry[f"text_mass_layer_{layer_idx}"] = np.sum(attn_to_text) / attn_to_text.shape[0]
-
-        results[f"{most}_{idx}"] = dict(entry)
-
-        # --- Cleanup ---
-        del outputs
-        if 'inputs' in locals(): del inputs
-        if 'image' in locals(): del image
-        if 'prepare_inputs' in locals(): del prepare_inputs
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-        gc.collect()
-
-    return results
-"""
 def main():
     # TODO: update all file-names and paths to run on multiple tasks 
     # image_type = "counterfact" most="True"
@@ -391,14 +259,6 @@ def main():
         "Qwen/Qwen2-VL-7B-Instruct", torch_dtype="auto", device_map="auto"
         )
 
-    # load DF. 
-    """
-    if args.task == "color":
-        df = pd.read_csv("/oscar/data/ceickhof/visual_counterfact/final_images_with_counterfact.csv") #.head(10)
-        
-    elif args.task == "size":
-        df = pd.read_csv("with_line_sizes_dup.csv")
-    """
     
     if args.task == "color":
 
@@ -413,11 +273,6 @@ def main():
     
             
     elif args.task == "size":
-        #df = pd.read_csv("with_line_sizes_dup.csv") #.head(10)
-        
-        #df = pd.read_csv("with_line_sizes_balanced.csv")
-        
-        #df = pd.read_csv("size_filtered_WK.csv")
 
         if args.model_version == "llava-next":
             df = pd.read_csv("size_df_for_TV_llava-next.csv") #.head(5)
@@ -462,7 +317,6 @@ def main():
             gc.collect()
     
         
-    #answers = mllm_early_decoding(df, processor, model, args.model_version, args.task,  most=args.most)
 
     file_path = f'attention_mass_{args.task}_{args.model_version}_{len(df)}.pickle'
 
